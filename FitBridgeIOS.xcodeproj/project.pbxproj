@@ -34,20 +34,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		9DC17631856B4A69887AC3F2 = {
-			isa = PBXGroup;
-			children = (
-				AB90D5F3418B4BB09D82E479 /* FitBridgeIOS */,
-				68655BF6EE0D437DAF878133 /* Products */,
-			);
-			sourceTree = "<group>";
-		};
 		68655BF6EE0D437DAF878133 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				5BA994507EAA4C4284D8544C /* FitBridgeIOS.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		9DC17631856B4A69887AC3F2 = {
+			isa = PBXGroup;
+			children = (
+				AB90D5F3418B4BB09D82E479 /* FitBridgeIOS */,
+				68655BF6EE0D437DAF878133 /* Products */,
+			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -100,13 +100,13 @@
 			);
 			mainGroup = 9DC17631856B4A69887AC3F2;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 68655BF6EE0D437DAF878133 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			packageReferences = (
-				0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
-			);
 			targets = (
 				FCA351A5DA364B42B1B10AD1 /* FitBridgeIOS */,
 			);
@@ -261,6 +261,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 39GMNLVUHF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
@@ -269,6 +270,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -292,6 +294,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 39GMNLVUHF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
@@ -300,6 +303,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -340,7 +344,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+		0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -353,7 +357,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		048522B4CEBF41A1B3921B04 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			package = 0019E651433146CBADD25AE9 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */

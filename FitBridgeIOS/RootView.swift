@@ -42,7 +42,15 @@ struct RootView: View {
                         HStack {
                             metric(label: "Power", value: "\(bridge.currentPower) W")
                             metric(label: "Cadence", value: "\(bridge.currentCadence) rpm")
-                            metric(label: "Speed", value: String(format: "%.1f km/h", bridge.currentSpeedKmh))
+                            metric(
+                                label: profileStore.profile.useVirtualSpeed ? "Speed (virtual)" : "Speed",
+                                value: String(format: "%.1f km/h", bridge.currentSpeedKmh)
+                            )
+                        }
+                        if profileStore.profile.useVirtualSpeed, bridge.trainerReportedSpeedKmh > 0 {
+                            Text(String(format: "Trainer reports %.1f km/h", bridge.trainerReportedSpeedKmh))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
                     }
                 } else {
@@ -77,6 +85,10 @@ struct RootView: View {
                             .foregroundColor(.secondary)
                     }
                     .font(.caption2)
+
+                    if bridge.connectionState == .connected {
+                        gradeControl
+                    }
                 }
 
                 Section("Log") {
@@ -99,6 +111,26 @@ struct RootView: View {
             .navigationTitle("FitBridge")
         }
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+    }
+
+    /// Road gradient. Feeds the virtual speed model always, and the trainer's SIM parameters
+    /// when the trainer supports them — that second path is what the legs actually feel.
+    private var gradeControl: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("Grade")
+                Spacer()
+                Text(String(format: "%+.1f %%", bridge.gradePercent))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Button("Flat") { bridge.gradePercent = 0 }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+            }
+            .font(.caption)
+
+            Slider(value: $bridge.gradePercent, in: -10...15, step: 0.5)
+        }
     }
 
     @ViewBuilder
@@ -192,6 +224,8 @@ private struct SettingsPanel: View {
     @State private var ftp = ""
     @State private var crr = ""
     @State private var cda = ""
+    @State private var windSpeed = ""
+    @State private var wheelCircumference = ""
     @State private var keepAlive = true
 
     var body: some View {
@@ -206,6 +240,22 @@ private struct SettingsPanel: View {
         Section("Advanced") {
             settingRow("Crr", text: $crr)
             settingRow("CdA (m²)", text: $cda)
+            settingRow("Headwind (m/s)", text: $windSpeed)
+            Toggle("Virtual speed", isOn: Binding(
+                get: { profileStore.profile.useVirtualSpeed },
+                set: { on in profileStore.update { $0.useVirtualSpeed = on } }
+            ))
+            Text("Derives speed from power, weight, Crr and CdA the way Zwift/MyWhoosh do, instead of using the trainer's own speed field. Set headwind to 0 to match Zwift exactly.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Toggle("Send speed to Garmin", isOn: Binding(
+                get: { profileStore.profile.broadcastSpeedToGarmin },
+                set: { on in profileStore.update { $0.broadcastSpeedToGarmin = on } }
+            ))
+            settingRow("Wheel size (mm)", text: $wheelCircumference)
+            Text("Speed reaches the watch as wheel-revolution data inside the power sensor itself, the way a hub power meter reports it. Set the same wheel size on the watch for that sensor, or the speed it shows will be scaled. Re-pair the sensor after changing this toggle.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
             Toggle("SIM keep-alive (30 s)", isOn: $keepAlive)
             Toggle("Mock trainer", isOn: Binding(
                 get: { bridge.mockTrainerActive },
@@ -233,6 +283,8 @@ private struct SettingsPanel: View {
         ftp = "\(p.ftpWatts)"
         crr = String(p.crr)
         cda = fmt(p.cda)
+        windSpeed = fmt(p.windSpeedMps)
+        wheelCircumference = "\(p.wheelCircumferenceMm)"
         keepAlive = p.simKeepaliveEnabled
     }
 
@@ -243,6 +295,8 @@ private struct SettingsPanel: View {
             if let v = Int(ftp) { $0.ftpWatts = v }
             if let v = Double(crr) { $0.crr = v }
             if let v = Double(cda) { $0.cda = v }
+            if let v = Double(windSpeed) { $0.windSpeedMps = v }
+            if let v = Int(wheelCircumference), v > 0 { $0.wheelCircumferenceMm = v }
             $0.simKeepaliveEnabled = keepAlive
         }
     }

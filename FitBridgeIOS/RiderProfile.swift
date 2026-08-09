@@ -15,6 +15,13 @@ struct RiderProfile: Codable, FetchableRecord, PersistableRecord {
     var cda: Double = 0.30
     var windSpeedMps: Double = 0.8
     var simKeepaliveEnabled: Bool = true
+    /// Show physics-derived speed instead of the trainer's own instantaneous-speed field.
+    var useVirtualSpeed: Bool = true
+    /// Expose the Cycling Speed and Cadence service (0x1816) so the watch records speed/distance.
+    var broadcastSpeedToGarmin: Bool = true
+    /// Must match the wheel size configured on the watch for the sensor. 2096 mm = 700x23C,
+    /// which is also Garmin's own default.
+    var wheelCircumferenceMm: Int = 2096
 
     static let databaseTableName = "rider_profile"
     static let databaseColumnDecodingStrategy = DatabaseColumnDecodingStrategy.convertFromSnakeCase
@@ -31,5 +38,8 @@ struct RiderProfile: Codable, FetchableRecord, PersistableRecord {
         case cda
         case windSpeedMps   = "wind_speed_mps"
         case simKeepaliveEnabled = "sim_keepalive_enabled"
+        case useVirtualSpeed = "use_virtual_speed"
+        case broadcastSpeedToGarmin = "broadcast_speed_to_garmin"
+        case wheelCircumferenceMm = "wheel_circumference_mm"
     }
 }

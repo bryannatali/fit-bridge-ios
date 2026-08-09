@@ -43,7 +43,13 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
     @Published var trainerName: String = "—"
     @Published var currentPower: Int = 0
     @Published var currentCadence: Int = 0
+    /// Speed shown in the UI — physics-derived when `RiderProfile.useVirtualSpeed` is on,
+    /// otherwise whatever the trainer reported.
     @Published var currentSpeedKmh: Double = 0
+    /// The trainer's own instantaneous-speed field, kept separately so the two can be compared.
+    @Published var trainerReportedSpeedKmh: Double = 0
+    /// Road gradient fed to both the virtual speed model and the trainer's SIM parameters.
+    @Published var gradePercent: Double = 0
     @Published var controlGranted: Bool = false
     @Published var lastLogLine: String = ""
     @Published var simulationSupported: Bool = true
@@ -78,6 +84,7 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
     private var mockTrainerTimer: DispatchSourceTimer?
     private let profileStore: ProfileStore
     private var profileSub: AnyCancellable?
+    private var gradeSub: AnyCancellable?
 
     // MARK: - Trainer picker / reconnect state
     private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
@@ -91,6 +98,21 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
     private var powerSamples: [(date: Date, watts: Int)] = []
     private let powerAveragingWindow: TimeInterval = 3
 
+    // MARK: - Virtual speed
+    //
+    // Integrated at a steady 10 Hz rather than on packet arrival: trainers send at ~1–4 Hz and
+    // the whole point of the model is smooth, momentum-carrying speed between samples.
+    private let speedModel = VirtualSpeedModel()
+    private var speedTimer: DispatchSourceTimer?
+    private var lastSpeedTick = Date()
+    private let speedTickInterval: TimeInterval = 0.1
+    /// Raw (un-averaged) power drives the model — its own inertia is the smoothing, so feeding it
+    /// the 3-second average as well would just add lag.
+    private var lastRawPowerWatts: Int = 0
+    private var lastPowerSampleDate: Date = .distantPast
+    /// No packet for this long means the trainer went quiet — coast down rather than hold speed.
+    private let powerStaleAfter: TimeInterval = 5
+
     // Throttle expected-power delta logging to ~1 Hz
     private var lastExpectedPowerLogDate: Date = .distantPast
 
@@ -99,8 +121,23 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
 
+        refreshSpeedModelParameters()
+
         profileSub = profileStore.profileDidChange
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshSpeedModelParameters()
+                self?.resendSimulationParameters()
+            }
+
+        // The grade slider fires continuously while dragging; the model tracks it live but the
+        // control-point write is debounced so a drag doesn't flood the trainer.
+        gradeSub = $gradePercent
+            .removeDuplicates()
+            .handleEvents(receiveOutput: { [weak self] grade in
+                self?.speedModel.parameters.gradePercent = grade
+            })
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.resendSimulationParameters()
             }
@@ -134,6 +171,10 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
             centralManager.cancelPeripheralConnection(t)
         }
         centralManager.stopScan()
+        stopVirtualSpeed()
+        currentSpeedKmh = 0
+        trainerReportedSpeedKmh = 0
+        expectedResistivePower = 0
         discoveredTrainers.removeAll()
         discoveredPeripherals.removeAll()
         rememberedIdentifier = nil
@@ -176,6 +217,7 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         mockTrainerActive = true
         connectionState = .connected
         trainerName = "Mock Trainer"
+        startVirtualSpeed()
         log("Mock trainer active — injecting synthetic Indoor Bike Data, no BLE central connection.")
         let start = Date()
         let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -194,7 +236,10 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         powerSamples.removeAll()
         currentPower = 0
         currentCadence = 0
+        stopVirtualSpeed()
         currentSpeedKmh = 0
+        trainerReportedSpeedKmh = 0
+        expectedResistivePower = 0
         trainerName = "—"
         connectionState = .scanning
         if centralManager.state == .poweredOn {
@@ -273,6 +318,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
 
     private func applyPowerSample(_ watts: Int) {
         let now = Date()
+        lastRawPowerWatts = watts
+        lastPowerSampleDate = now
         powerSamples.append((date: now, watts: watts))
         let cutoff = now.addingTimeInterval(-powerAveragingWindow)
         powerSamples.removeAll { $0.date < cutoff }
@@ -342,6 +389,7 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         isReconnecting = false
         connectionState = .connected
         trainerName = peripheral.name ?? "Unknown trainer"
+        startVirtualSpeed()
         peripheral.delegate = self
         peripheral.discoverServices([GATT.ftmsService, GATT.cyclingPowerService])
     }
@@ -360,6 +408,10 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         featureChar = nil
         powerSamples.removeAll()
         currentPower = 0
+        stopVirtualSpeed()
+        currentSpeedKmh = 0
+        trainerReportedSpeedKmh = 0
+        expectedResistivePower = 0
         connectionState = .disconnected
         controlGranted = false
         simulationActive = false
@@ -515,20 +567,22 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         }
 
         DispatchQueue.main.async {
-            self.currentSpeedKmh = speed
+            self.trainerReportedSpeedKmh = speed
             self.currentCadence = cadence
             if let watts = power {
                 self.applyPowerSample(watts)
             }
+            if !self.profileStore.profile.useVirtualSpeed {
+                self.currentSpeedKmh = speed
+            }
             self.garminPeripheral.updateMetrics(power: self.currentPower, cadence: self.currentCadence)
 
-            let expected = self.expectedFlatPower(speedKmh: speed)
-            self.expectedResistivePower = expected
             let now = Date()
             if now.timeIntervalSince(self.lastExpectedPowerLogDate) >= 1.0 {
                 self.lastExpectedPowerLogDate = now
+                let expected = self.expectedResistivePower
                 let delta = self.currentPower - expected
-                print("[SIM-Physics] speed=\(String(format: "%.1f", speed)) km/h expected=\(expected)W actual=\(self.currentPower)W delta=\(delta)W")
+                print("[SIM-Physics] virtual=\(String(format: "%.1f", self.speedModel.speedKmh)) km/h trainer=\(String(format: "%.1f", speed)) km/h expected=\(expected)W actual=\(self.currentPower)W delta=\(delta)W")
             }
         }
     }
@@ -627,8 +681,10 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         return data
     }
 
+    /// Always re-sends the *current* grade — the 30 s keep-alive would otherwise flatten the road
+    /// back to 0 % every time it fired.
     private func resendSimulationParameters() {
-        setSimulationParameters()
+        setSimulationParameters(grade: gradePercent)
     }
 
     private func startSimKeepAlive(interval: TimeInterval = 30) {
@@ -647,19 +703,66 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         simKeepAliveTimer = nil
     }
 
-    // MARK: Physics helper
+    // MARK: Virtual speed
 
-    private func expectedFlatPower(speedKmh: Double) -> Int {
-        guard speedKmh > 0 else { return 0 }
+    /// Mirrors the rider profile (and current grade) into the speed model.
+    private func refreshSpeedModelParameters() {
         let profile = profileStore.profile
-        let v = speedKmh / 3.6
-        let totalMass = profile.riderWeightKg + profile.bikeWeightKg
-        let g = 9.80665
-        let rho = 1.225
-        let rollingForce = profile.crr * totalMass * g
-        let aeroForce = 0.5 * rho * profile.cda * v * v
-        let totalForce = rollingForce + aeroForce
-        return Int((totalForce * v).rounded())
+        speedModel.parameters.totalMassKg = profile.riderWeightKg + profile.bikeWeightKg
+        speedModel.parameters.crr = profile.crr
+        speedModel.parameters.cda = profile.cda
+        speedModel.parameters.headwindMps = profile.windSpeedMps
+        speedModel.parameters.gradePercent = gradePercent
+
+        garminPeripheral.wheelCircumferenceMm = profile.wheelCircumferenceMm
+        garminPeripheral.setSpeedBroadcastEnabled(profile.broadcastSpeedToGarmin)
+    }
+
+    private func startVirtualSpeed() {
+        refreshSpeedModelParameters()
+        guard speedTimer == nil else { return }
+        speedModel.reset()
+        lastSpeedTick = Date()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + speedTickInterval, repeating: speedTickInterval)
+        timer.setEventHandler { [weak self] in
+            self?.tickVirtualSpeed()
+        }
+        timer.resume()
+        speedTimer = timer
+    }
+
+    private func stopVirtualSpeed() {
+        speedTimer?.cancel()
+        speedTimer = nil
+        speedModel.reset()
+        lastRawPowerWatts = 0
+        lastPowerSampleDate = .distantPast
+        // The keepalive timer keeps notifying after a disconnect; leave the watch at 0 rather
+        // than holding whatever speed we were doing when the trainer dropped.
+        garminPeripheral.updateSpeed(kmh: 0)
+    }
+
+    private func tickVirtualSpeed() {
+        let now = Date()
+        let dt = now.timeIntervalSince(lastSpeedTick)
+        lastSpeedTick = now
+
+        let stale = now.timeIntervalSince(lastPowerSampleDate) > powerStaleAfter
+        let watts = stale ? 0 : max(0, lastRawPowerWatts)
+        speedModel.advance(dt: dt, powerWatts: Double(watts))
+
+        if profileStore.profile.useVirtualSpeed {
+            currentSpeedKmh = speedModel.speedKmh
+        }
+        expectedResistivePower = resistivePower(atSpeedKmh: currentSpeedKmh)
+        garminPeripheral.updateSpeed(kmh: currentSpeedKmh)
+    }
+
+    /// Steady-state power the rider would need to hold `speedKmh` — the "Expected: N W" readout.
+    private func resistivePower(atSpeedKmh speedKmh: Double) -> Int {
+        guard speedKmh > 0 else { return 0 }
+        return Int(speedModel.parameters.resistivePower(atSpeedMps: speedKmh / 3.6).rounded())
     }
 
     private func handleControlPointIndication(_ data: Data) {

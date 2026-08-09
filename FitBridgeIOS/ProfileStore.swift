@@ -54,6 +54,17 @@ final class ProfileStore: ObservableObject {
                 t.column("sim_keepalive_enabled", .integer).notNull().defaults(to: 1)
             }
         }
+        migrator.registerMigration("v2_addUseVirtualSpeed") { db in
+            try db.alter(table: "rider_profile") { t in
+                t.add(column: "use_virtual_speed", .boolean).notNull().defaults(to: true)
+            }
+        }
+        migrator.registerMigration("v3_addGarminSpeedBroadcast") { db in
+            try db.alter(table: "rider_profile") { t in
+                t.add(column: "broadcast_speed_to_garmin", .boolean).notNull().defaults(to: true)
+                t.add(column: "wheel_circumference_mm", .integer).notNull().defaults(to: 2096)
+            }
+        }
         try? migrator.migrate(dbQueue)
     }
 
