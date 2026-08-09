@@ -109,6 +109,16 @@ struct RootView: View {
                 }
             }
             .navigationTitle("FitBridge")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        ComputerScreenView(bridge: bridge, profileStore: profileStore)
+                    } label: {
+                        Image(systemName: "gauge.open.with.lines.needle.33percent")
+                    }
+                    .accessibilityLabel("Computer screen")
+                }
+            }
         }
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
     }
