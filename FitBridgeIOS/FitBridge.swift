@@ -116,6 +116,12 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
     // Throttle expected-power delta logging to ~1 Hz
     private var lastExpectedPowerLogDate: Date = .distantPast
 
+    // MARK: - Live Activity
+    private let rideActivity = RideActivityController()
+    /// Dims the pill during a transient BLE dropout instead of tearing the activity down —
+    /// see the didDisconnectPeripheral / rescan split below.
+    private var rideActivityLinkState: RideActivityAttributes.LinkState = .riding
+
     init(profileStore: ProfileStore) {
         self.profileStore = profileStore
         super.init()
@@ -141,6 +147,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
             .sink { [weak self] _ in
                 self?.resendSimulationParameters()
             }
+
+        GradeCommandCenter.handler = self
     }
 
     func startScanning() {
@@ -172,6 +180,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         }
         centralManager.stopScan()
         stopVirtualSpeed()
+        rideActivity.end()
+        rideActivityLinkState = .riding
         currentSpeedKmh = 0
         trainerReportedSpeedKmh = 0
         expectedResistivePower = 0
@@ -218,6 +228,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         connectionState = .connected
         trainerName = "Mock Trainer"
         startVirtualSpeed()
+        rideActivityLinkState = .riding
+        rideActivity.start(trainerName: trainerName)
         log("Mock trainer active — injecting synthetic Indoor Bike Data, no BLE central connection.")
         let start = Date()
         let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -237,6 +249,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         currentPower = 0
         currentCadence = 0
         stopVirtualSpeed()
+        rideActivity.end()
+        rideActivityLinkState = .riding
         currentSpeedKmh = 0
         trainerReportedSpeedKmh = 0
         expectedResistivePower = 0
@@ -390,6 +404,9 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         connectionState = .connected
         trainerName = peripheral.name ?? "Unknown trainer"
         startVirtualSpeed()
+        rideActivityLinkState = .riding
+        rideActivity.start(trainerName: trainerName)
+        pushRideActivityUpdate(force: true)
         peripheral.delegate = self
         peripheral.discoverServices([GATT.ftmsService, GATT.cyclingPowerService])
     }
@@ -418,6 +435,8 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
 
         if peripheral.identifier == rememberedIdentifier {
             isReconnecting = true
+            rideActivityLinkState = .reconnecting
+            pushRideActivityUpdate(force: true)
             beginConnectAttempt(to: peripheral)
         } else {
             rescan()
@@ -757,6 +776,7 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
         }
         expectedResistivePower = resistivePower(atSpeedKmh: currentSpeedKmh)
         garminPeripheral.updateSpeed(kmh: currentSpeedKmh)
+        pushRideActivityUpdate()
     }
 
     /// Steady-state power the rider would need to hold `speedKmh` — the "Expected: N W" readout.
@@ -794,6 +814,48 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
                 }
             }
         }
+    }
+
+    // MARK: Live Activity
+
+    private var rideActivitySimState: RideActivityAttributes.SimState {
+        if !simulationSupported { return .unsupported }
+        return simulationActive ? .active : .off
+    }
+
+    private func currentRideActivityState() -> RideActivityAttributes.ContentState {
+        RideActivityAttributes.ContentState(
+            powerWatts: currentPower,
+            cadenceRpm: currentCadence,
+            speedKmh: currentSpeedKmh,
+            gradePercent: gradePercent,
+            expectedWatts: expectedResistivePower,
+            sim: rideActivitySimState,
+            link: rideActivityLinkState
+        )
+    }
+
+    private func pushRideActivityUpdate(force: Bool = false) {
+        rideActivity.update(currentRideActivityState(), force: force)
+    }
+
+    private func clampedGrade(_ value: Double) -> Double {
+        let stepped = (value / 0.5).rounded() * 0.5
+        return min(15, max(-10, stepped))
+    }
+}
+
+// MARK: - Grade Live Activity intents
+
+extension FitBridge: GradeCommandHandling {
+    func nudgeGrade(by delta: Double) {
+        gradePercent = clampedGrade(gradePercent + delta)
+        pushRideActivityUpdate(force: true)
+    }
+
+    func setGrade(_ value: Double) {
+        gradePercent = clampedGrade(value)
+        pushRideActivityUpdate(force: true)
     }
 }
 

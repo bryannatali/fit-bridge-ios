@@ -44,6 +44,9 @@ RootView.swift  (SwiftUI, observes both)
 | `FitBridgeIOSApp.swift` | App entry point, creates `FitBridge`/`ProfileStore` as `@StateObject`, hosts `WindowGroup` |
 | `VirtualSpeedModel.swift` | Pure physics — integrates speed forward from power against the rider's mass/Crr/CdA/grade. No BLE, no UI, no `import` beyond Foundation, so it's directly testable |
 | `ProfileStore.swift`, `RiderProfile.swift` | GRDB-backed rider profile (weight, FTP, Crr, CdA, wind, SIM keep-alive, virtual-speed toggle) — from the macOS app, plus the `use_virtual_speed` column added in migration `v2` |
+| `RideActivityController.swift` | App-target-only. Thin wrapper around `Activity<RideActivityAttributes>` — start/throttled update/end |
+| `Shared/RideActivityAttributes.swift`, `Shared/GradeIntents.swift` | Compiled into both the app and `FitBridgeWidgetsExtension` targets — Live Activity content type and the grade `LiveActivityIntent`s |
+| `FitBridgeWidgets/RideActivityWidget.swift` | Widget-extension-only. Renders the Live Activity: Lock Screen, compact/minimal Dynamic Island, expanded view with grade buttons |
 
 ## BLE details
 
@@ -159,9 +162,17 @@ Symptom: the Garmin watch discovers FitBridge in its sensor list and adds it, bu
 
 Related but distinct dead end investigated at the same time: iOS can only advertise the peripheral role with a rotating Resolvable Private Address (CoreBluetooth exposes no way to use a public address), and several Garmin forum threads blame RPA handling for the identical stuck-at-connecting symptom ([Edge X30](https://forums.garmin.com/developer/connect-iq/f/discussion/318804/connecting-a-phone-using-a-resolvable-private-address-to-an-edge-x30-gps), [FR965/Edge 1040](https://forums.garmin.com/sports-fitness/running-multisport/f/forerunner-965/440391/ble-heart-rate-sensors-using-private-addresses-are-not-discovered)). That turned out **not** to be the cause here. Kept as a pointer in case a future watch/firmware fails even with the phone link off.
 
-## Toward the Dynamic Island (future, not implemented)
+## Dynamic Island Live Activity
 
-A Live Activity keeps the UI visible but does *not* by itself keep the process alive — the `bluetooth-peripheral` background mode is what does that, which is why it's enabled now. The next step when that work starts is adding `CBPeripheralManagerOptionRestoreIdentifierKey` + `peripheralManager(_:willRestoreState:)` to `GarminPeripheral` so iOS can relaunch the app into the background and hand the advertising session back.
+Connecting the trainer (real or mock) starts a Live Activity showing power/cadence/speed in the Dynamic Island and on the Lock Screen; long-press expands it to all three metrics, SIM status, and grade controls. A Live Activity keeps the *UI* visible but does *not* by itself keep the process alive — the `bluetooth-peripheral` background mode is what does that, and it was already in place before this work started.
+
+- **`Shared/RideActivityAttributes.swift` and `Shared/GradeIntents.swift` are compiled into both the `FitBridgeIOS` app target and the `FitBridgeWidgetsExtension` widget target.** They can't live in either target's `PBXFileSystemSynchronizedRootGroup` (a synchronized group belongs to one target only) — they're a plain `PBXGroup` in `project.pbxproj` with a `PBXBuildFile` entry in *each* target's Sources phase.
+- **No `Slider` in Live Activities** — `Button`/`Toggle` backed by App Intents are the only interactive controls ActivityKit allows. Grade control is `AdjustGradeIntent(delta:)` (±0.5) and `SetGradeIntent(value:)` (Flat), matching `RootView.gradeControl`'s step and range.
+- **`LiveActivityIntent`s run in the *app's* process, not the extension's.** `AdjustGradeIntent`/`SetGradeIntent` reach the live `FitBridge` instance directly through `GradeCommandCenter.handler`, a weak `@MainActor` reference `FitBridge` sets on itself at init. This is why no App Group, no Darwin notification, and no second GRDB connection were needed.
+- **Updates are throttled to ~1 Hz in `RideActivityController.update(_:force:)`.** `FitBridge.tickVirtualSpeed()` calls it at 10 Hz; ActivityKit budgets updates, so pushing every tick would blow through the budget. Grade-button intents call it with `force: true` so a tap feels instant instead of waiting out the throttle window.
+- **A transient BLE dropout dims the pill (`link = .reconnecting`) rather than ending the activity.** `didDisconnectPeripheral`'s auto-reconnect path (up to 4 attempts) sets this instead of calling `rideActivity.end()` — ending/restarting on every blip would flash the pill. `rescan()` and `stopMockTrainer()` are the only places that actually end it.
+- **The widget extension's `NSExtensionPointIdentifier` needs a real partial Info.plist, not an `INFOPLIST_KEY_*` build setting.** `INFOPLIST_KEY_NSExtensionPointIdentifier` does *not* produce the nested `NSExtension.NSExtensionPointIdentifier` dict the OS requires to load the extension (confirmed by inspecting the built `.appex`'s `Info.plist` — the key was silently dropped) — the same class of gap `Config/Info.plist` already exists for (`UIBackgroundModes`). `Config/WidgetInfo.plist` holds it and is wired in via `INFOPLIST_FILE` alongside `GENERATE_INFOPLIST_FILE = YES`, same pattern as the app target. Symptom if this regresses: `simctl install` fails with "Failed to create app extension placeholder" / "Invalid placeholder attributes".
+- Not yet done: `CBPeripheralManagerOptionRestoreIdentifierKey` + `peripheralManager(_:willRestoreState:)` on `GarminPeripheral`, so iOS can relaunch the app into the background and hand the advertising session back after termination. This solves a different problem (a *terminated* app) than the Live Activity above (a foregrounded/backgrounded one) and was deliberately left out of this work.
 
 ## Known limitations / deferred work
 
@@ -174,7 +185,6 @@ A Live Activity keeps the UI visible but does *not* by itself keep the process a
 - **Heart rate**: not bridged; user connects HR monitor directly to Garmin.
 - **The watch's phone link is mutually exclusive with FitBridge**: pairing requires turning off the watch's phone connection, so notifications/LiveTrack/live sync are unavailable on the watch while riding with FitBridge as the sensor. Activities sync once the phone link is turned back on afterwards. No workaround from the app side — see the "Known issue" section above.
 - **ANT+**: not supported.
-- **Dynamic Island / Live Activity**: not implemented — see "Toward the Dynamic Island" above.
 
 ## Adding a new feature — checklist
 
