@@ -4,3 +4,6 @@ xcuserdata/
 build/
 DerivedData/
 .build/
+
+# Personal signing team — see Config/Signing.xcconfig
+Config/Local.xcconfig

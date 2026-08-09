@@ -197,7 +197,13 @@ DEVELOPER_DIR=/Applications/Xcode.app xcodebuild \
   -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-To run against real hardware: a `DEVELOPMENT_TEAM` must be selected once in Xcode's Signing & Capabilities tab (deliberately absent from the project file — simulator builds don't need it).
+To run against real hardware, create `Config/Local.xcconfig` (gitignored) with your own team:
+
+```
+DEVELOPMENT_TEAM = YOURTEAMID
+```
+
+`Config/Signing.xcconfig` is the target's base configuration and pulls that in via `#include?`, so a clone without the file still builds and runs in the Simulator. `DEVELOPMENT_TEAM` is deliberately kept **out of `project.pbxproj`** — it's a personal Apple team ID, and having it there means every device build Xcode touches shows up as project-file churn in the diff. Setting the team in Xcode's Signing & Capabilities tab does work, but it writes the value straight back into `project.pbxproj`; if that happens, delete the line and put it in `Local.xcconfig` instead.
 
 ## Testing without a real trainer
 

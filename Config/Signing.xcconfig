@@ -1,0 +1,15 @@
+// Signing configuration for the FitBridgeIOS target.
+//
+// DEVELOPMENT_TEAM is deliberately NOT stored in project.pbxproj — it's a personal Apple
+// Developer team ID and it doesn't belong in a shared repo. Simulator builds don't need it
+// (CODE_SIGNING_ALLOWED=NO), so a fresh clone builds and runs in the Simulator as-is.
+//
+// To run on a physical iPhone, create Config/Local.xcconfig (gitignored) containing:
+//
+//     DEVELOPMENT_TEAM = YOURTEAMID
+//
+// The optional include below picks it up. Setting the team in Xcode's Signing & Capabilities
+// tab instead also works, but Xcode writes it straight back into project.pbxproj — which is
+// exactly the churn this file exists to avoid.
+
+#include? "Local.xcconfig"

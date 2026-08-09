@@ -12,6 +12,7 @@
 
 /* Begin PBXFileReference section */
 		5BA994507EAA4C4284D8544C /* FitBridgeIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FitBridgeIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1C7A0F2B4D34E8FA0361D75 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -45,9 +46,18 @@
 		9DC17631856B4A69887AC3F2 = {
 			isa = PBXGroup;
 			children = (
+				D8B3F14C6A2E47D19E5C0B83 /* Config */,
 				AB90D5F3418B4BB09D82E479 /* FitBridgeIOS */,
 				68655BF6EE0D437DAF878133 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		D8B3F14C6A2E47D19E5C0B83 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				E1C7A0F2B4D34E8FA0361D75 /* Signing.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -256,12 +266,12 @@
 		};
 		ACF0460C81FC42A4AB0348F3 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E1C7A0F2B4D34E8FA0361D75 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 39GMNLVUHF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
@@ -289,12 +299,12 @@
 		};
 		DD4F39E428D4469CA4EB4C6E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E1C7A0F2B4D34E8FA0361D75 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 39GMNLVUHF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
