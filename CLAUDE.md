@@ -6,6 +6,10 @@ FitBridgeIOS is an iOS app that acts as a **BLE bridge** between an indoor bike 
 
 This is a port of the macOS menu bar app `~/dev/FitBridge` — same business logic, minimalist iOS UI. See "Porting notes" below for what changed.
 
+## Commit conventions
+
+Always write semantic commit messages: `<type>: <summary>`, imperative mood, under ~70 characters for the summary line. Common types here: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`. Do not add Claude as a co-author.
+
 ## Platform
 
 - iOS 26.0+, Swift 5.0, universal (iPhone + iPad)
