@@ -20,7 +20,7 @@ Always write semantic commit messages: `<type>: <summary>`, imperative mood, und
 
 ## Architecture
 
-The app has two parallel BLE roles, both running simultaneously:
+The app has three BLE roles running simultaneously — two Centrals and one Peripheral:
 
 ```
 [Trainer hardware]
@@ -31,19 +31,32 @@ The app has two parallel BLE roles, both running simultaneously:
       │                                              ▼
       │                                       [Garmin watch / any BLE power consumer]
       ▼
-RootView.swift  (SwiftUI, observes both)
+RootView.swift  (SwiftUI, observes FitBridge, GarminPeripheral and HeartRateMonitor)
+      ▲
+      │
+HeartRateMonitor.swift  ◄── BLE Central (its own CBCentralManager)  ◄── [HR strap / watch broadcasting HR]
 ```
+
+`HeartRateMonitor` is a **second, independent `CBCentralManager`**, not a second responsibility
+bolted onto `FitBridge`'s. CoreBluetooth allows only one active scan per manager, and
+`FitBridge.connect(to:)` already owns that manager's scan/connect state machine end to end —
+threading a combined filter through `startScanning()`/`rescan()`/`retryOrGiveUp()`/
+`didDisconnectPeripheral` to add an unrelated sensor would mean rewriting the app's most delicate
+code to serve a feature whose lifecycle (a strap/watch that comes and goes) is genuinely
+independent of the trainer's. Heart rate is **display-only** — it is never re-broadcast to the
+watch as a service of our own; see hard rule #1 below.
 
 ## Key files
 
 | File | Role |
 |---|---|
-| `FitBridge.swift` | CBCentralManager — scans, connects to trainer, parses FTMS/Cycling Power data, owns `GarminPeripheral` instance |
+| `FitBridge.swift` | CBCentralManager — scans, connects to trainer, parses FTMS/Cycling Power data, owns `GarminPeripheral` and `HeartRateMonitor` instances |
 | `GarminPeripheral.swift` | CBPeripheralManager — advertises Cycling Power Service (0x1818), streams power+cadence to Garmin |
-| `RootView.swift` | SwiftUI `NavigationStack` + `List` — observes both `FitBridge` and `GarminPeripheral` |
+| `HeartRateMonitor.swift` | A second, independent CBCentralManager — scans/connects to a BLE Heart Rate sensor (0x180D), display-only. See "Architecture" above for why it isn't folded into `FitBridge` |
+| `RootView.swift` | SwiftUI `NavigationStack` + `List` — observes `FitBridge`, `GarminPeripheral` and `HeartRateMonitor` |
 | `FitBridgeIOSApp.swift` | App entry point, creates `FitBridge`/`ProfileStore` as `@StateObject`, hosts `WindowGroup` |
 | `VirtualSpeedModel.swift` | Pure physics — integrates speed forward from power against the rider's mass/Crr/CdA/grade. No BLE, no UI, no `import` beyond Foundation, so it's directly testable |
-| `ProfileStore.swift`, `RiderProfile.swift` | GRDB-backed rider profile (weight, FTP, Crr, CdA, wind, SIM keep-alive, virtual-speed toggle) — from the macOS app, plus the `use_virtual_speed` column added in migration `v2` |
+| `ProfileStore.swift`, `RiderProfile.swift` | GRDB-backed rider profile (weight, FTP, Crr, CdA, wind, SIM keep-alive, virtual-speed toggle, remembered HR sensor) — from the macOS app, plus the `use_virtual_speed` column added in migration `v2` and the `heart_rate_sensor_*` columns added in `v4` |
 | `RideActivityController.swift` | App-target-only. Thin wrapper around `Activity<RideActivityAttributes>` — start/throttled update/end |
 | `Shared/RideActivityAttributes.swift`, `Shared/GradeIntents.swift` | Compiled into both the app and `FitBridgeWidgetsExtension` targets — Live Activity content type and the grade `LiveActivityIntent`s |
 | `FitBridgeWidgets/RideActivityWidget.swift` | Widget-extension-only. Renders the Live Activity: Lock Screen, compact/minimal Dynamic Island, expanded view with grade buttons |
@@ -75,6 +88,51 @@ The trainer's own FTMS instantaneous-speed field (`trainerReportedSpeedKmh`) is 
 ### Grade
 
 `FitBridge.gradePercent` (session state, not persisted) drives two things: the virtual speed model, and the trainer's FTMS SIM parameters — the second is what the legs actually feel. The slider in the Simulation section writes it; the write to the control point is debounced 250 ms so a drag doesn't flood the trainer, while the model tracks it live. `resendSimulationParameters()` must always pass the current grade — the 30 s SIM keep-alive would otherwise flatten the road back to 0 % every time it fired.
+
+### Heart rate (`HeartRateMonitor.swift`) — display-only, second BLE Central
+
+A Garmin watch's "Broadcast Heart Rate" (standard on everything since the FR245/FR945 and Fenix 6,
+2020) is a plain BLE Heart Rate Service (`0x180D`) peripheral, not proprietary or ANT+-only, so
+consuming it is just a second central connection subscribing to `0x2A37` — the same code path any
+chest strap uses. HR is **display-only**: it feeds `RootView`'s Live section (a fourth metric) and
+`ComputerScreenView`'s fourth readout (shown only while connected), and nothing else reads it.
+
+- **Own `CBCentralManager`.** See "Architecture" above for why it can't share `FitBridge`'s.
+- **Parsing is pure**: `parseHeartRateMeasurement(_ data: Data) -> Int?` at file scope, bounds-checked the same way `FitBridge.readUInt16` is — a short packet returns `nil` instead of trapping.
+- **Reconnect is indefinite**, unlike the trainer's give-up-after-4: a personal strap/watch is a stable device (`RiderProfile.heartRateSensorId`/`heartRateSensorName`, migration `v4`) that's expected to wander off and come back, so it's retried every 5 s forever. `HeartRateMonitor.forget()` clears the remembered sensor and returns to the picker.
+- **Staleness**: no `0x2A37` notification for 5 s clears `heartRateBpm` back to `nil` so the UI shows "—" instead of freezing on a stale reading — mirrors `FitBridge.powerStaleAfter`.
+- **Scan auto-stops after ~60 s idle** with nobody picked — with the trainer central, the Garmin peripheral and this central all live at once, an indefinitely-running scan is needless radio contention. A "Scan" button in the picker restarts it.
+- **No mock mode.** Unlike the trainer, `HeartRateMonitor` has no synthetic data path — the Simulator's picker just sits empty (no CoreBluetooth there at all), and HR can only be exercised against a real strap or watch.
+- **Never re-broadcast to the watch.** Advertising `0x180D` alongside `0x1818` would violate hard rule #1 below (a Garmin watch loses its connection when a peripheral offers two services), and it would be pointless anyway — the watch is the source of the reading, not a consumer of it.
+
+**Answered on hardware, 2026-08-10: a Forerunner will not do both roles at once.** This was the open
+question — whether the watch could broadcast HR to FitBridge as a *peripheral* while also being
+connected to FitBridge as the power sensor's *central*. It can't, and the failure is silent rather
+than loud:
+
+1. Watch broadcasting HR, not yet connected as a power sensor → works perfectly. `0x180D` / `0x2A37`
+   discovered, `isNotifying=true`, a steady stream of `[06 XX]` packets decoding to sane bpm.
+2. Connect the watch to FitBridge as a power sensor → the HR link drops
+   (`The specified device has disconnected from us`), auto-reconnects, rediscovers `0x180D`,
+   **re-subscribes successfully (`isNotifying=true`) — and then never notifies again.** The watch
+   keeps advertising `0x180D` the whole time.
+3. Disconnect the power sensor and re-enable the watch's phone link → HR streams again.
+
+**So "connected" is not evidence the GATT path is broken.** The subscribe succeeds; the watch just
+stops sending. Don't debug `HeartRateMonitor.swift` on this symptom — the parse and GATT path are
+confirmed correct against this exact watch by step 1. The UI shows connected-but-silent as an orange
+dot and "no data" precisely so this is distinguishable from a healthy link at a glance.
+
+**One confound not yet separated**: pairing the power sensor requires turning the watch's phone link
+off (see "Known issue" below), so steps 2 and 3 moved two variables at once. It's unknown whether HR
+dies because of the power-sensor connection or because of the phone link being off — the watch may
+simply refuse BLE to its paired phone once that toggle is off. The isolating test is: phone link
+off, power sensor **not** connected, watch broadcasting HR. If HR streams, the power connection is
+the cause; if it doesn't, the phone-link toggle is. Either way the practical outcome is the same.
+
+**The workaround** is the one anticipated: a chest strap (e.g. Garmin HRM-Pro/HRM-Dual) paired to
+the phone directly over BLE, alongside the watch taking the same strap over ANT+. Both roles then
+land on different devices and nothing conflicts.
 
 ### Peripheral side (serving Garmin)
 
@@ -182,7 +240,7 @@ Connecting the trainer (real or mock) starts a Live Activity showing power/caden
 - **Distance / elevation**: not accumulated *in the app* — the watch derives distance from the wheel revolution count. `VirtualSpeedModel.speedMps` is the obvious thing to integrate if an in-app readout is ever wanted.
 - **Grade is manual**: there's no route or workout file driving it — the user moves the slider. No auto-undulation, no course profile.
 - **Air density is fixed** at 1.225 kg/m³; there's no altitude input, so riding a real high-altitude course's numbers won't match.
-- **Heart rate**: not bridged; user connects HR monitor directly to Garmin.
+- **Heart rate**: read and displayed in-app (see "Heart rate" under BLE details) as of this work, sourced from a strap or a watch broadcasting HR — display-only, never re-broadcast to the watch. No mock/Simulator path (see "Heart rate" above). **The watch cannot be both the HR source and the power sensor's central at the same time** — confirmed on hardware 2026-08-10; it re-subscribes and then silently stops notifying. Use a separate chest strap. See "Heart rate" under BLE details for the full sequence and the one variable still unseparated.
 - **The watch's phone link is mutually exclusive with FitBridge**: pairing requires turning off the watch's phone connection, so notifications/LiveTrack/live sync are unavailable on the watch while riding with FitBridge as the sensor. Activities sync once the phone link is turned back on afterwards. No workaround from the app side — see the "Known issue" section above.
 - **ANT+**: not supported.
 

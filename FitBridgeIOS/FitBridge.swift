@@ -72,6 +72,9 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
     }
 
     let garminPeripheral = GarminPeripheral()
+    /// Second, independent BLE Central for the Heart Rate Service — see HeartRateMonitor.swift
+    /// for why it can't share `centralManager`. Display-only; never re-broadcast to the watch.
+    let heartRate: HeartRateMonitor
 
     private var centralManager: CBCentralManager!
     private var trainer: CBPeripheral?
@@ -124,6 +127,7 @@ class FitBridge: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriphe
 
     init(profileStore: ProfileStore) {
         self.profileStore = profileStore
+        self.heartRate = HeartRateMonitor(profileStore: profileStore)
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
 
@@ -868,6 +872,8 @@ enum GATT {
     static let indoorBikeData = CBUUID(string: "2AD2")
     static let ftmsControlPoint = CBUUID(string: "2AD9")
     static let ftmsFeature = CBUUID(string: "2ACC")
+    static let heartRateService = CBUUID(string: "180D")
+    static let heartRateMeasurement = CBUUID(string: "2A37")
 }
 
 enum FTMSOpCode: UInt8 {

@@ -65,6 +65,12 @@ final class ProfileStore: ObservableObject {
                 t.add(column: "wheel_circumference_mm", .integer).notNull().defaults(to: 2096)
             }
         }
+        migrator.registerMigration("v4_addHeartRateSensor") { db in
+            try db.alter(table: "rider_profile") { t in
+                t.add(column: "heart_rate_sensor_id", .text)
+                t.add(column: "heart_rate_sensor_name", .text)
+            }
+        }
         try? migrator.migrate(dbQueue)
     }
 

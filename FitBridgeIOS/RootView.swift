@@ -9,11 +9,13 @@ struct RootView: View {
     @ObservedObject var bridge: FitBridge
     @ObservedObject var profileStore: ProfileStore
     @ObservedObject private var garmin: GarminPeripheral
+    @ObservedObject private var heartRate: HeartRateMonitor
 
     init(bridge: FitBridge, profileStore: ProfileStore) {
         self.bridge = bridge
         self.profileStore = profileStore
         _garmin = ObservedObject(wrappedValue: bridge.garminPeripheral)
+        _heartRate = ObservedObject(wrappedValue: bridge.heartRate)
     }
 
     var body: some View {
@@ -46,6 +48,7 @@ struct RootView: View {
                                 label: profileStore.profile.useVirtualSpeed ? "Speed (virtual)" : "Speed",
                                 value: String(format: "%.1f km/h", bridge.currentSpeedKmh)
                             )
+                            metric(label: "HR", value: heartRate.heartRateBpm.map { "\($0) bpm" } ?? "—")
                         }
                         if profileStore.profile.useVirtualSpeed, bridge.trainerReportedSpeedKmh > 0 {
                             Text(String(format: "Trainer reports %.1f km/h", bridge.trainerReportedSpeedKmh))
@@ -56,6 +59,45 @@ struct RootView: View {
                 } else {
                     Section("Trainers") {
                         pickerSection
+                    }
+                }
+
+                Section("Heart rate") {
+                    HStack {
+                        // A live GATT link is not the same as a live reading: a Garmin watch will
+                        // hold the 0x180D connection open and simply stop notifying 0x2A37 once it
+                        // is also connected to us as a power sensor. Green here would say
+                        // "everything's fine" while the readout sits at "—".
+                        Circle()
+                            .fill(heartRateStatusColor)
+                            .frame(width: 8, height: 8)
+                        Text(heartRate.sensorName)
+                            .font(.headline)
+                        Spacer()
+                        if let bpm = heartRate.heartRateBpm {
+                            Text("\(bpm) bpm")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.red)
+                        } else if heartRate.connectionState == .connected {
+                            Text("no data")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    if heartRate.connectionState == .connected {
+                        Button("Forget", role: .destructive) {
+                            heartRate.forget()
+                        }
+                        .font(.caption)
+                    } else {
+                        heartRatePickerSection
+                    }
+
+                    if !heartRate.lastLogLine.isEmpty {
+                        Text(heartRate.lastLogLine)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(3)
                     }
                 }
 
@@ -183,6 +225,43 @@ struct RootView: View {
         }
     }
 
+    @ViewBuilder
+    private var heartRatePickerSection: some View {
+        if heartRate.connectionState == .connecting {
+            HStack(spacing: 6) {
+                ProgressView()
+                Text(heartRate.isReconnecting ? "Reconnecting to \(heartRate.sensorName)…" : "Connecting to \(heartRate.sensorName)…")
+                    .font(.caption)
+            }
+        } else {
+            if heartRate.discoveredSensors.isEmpty {
+                Text("Searching for heart rate sensors…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(heartRate.discoveredSensors) { candidate in
+                    Button {
+                        heartRate.connect(to: candidate.id)
+                    } label: {
+                        HStack {
+                            Circle()
+                                .fill(rssiColor(candidate.rssi))
+                                .frame(width: 8, height: 8)
+                            Text(candidate.name)
+                                .font(.caption)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+
+            Button("Scan") {
+                heartRate.startScanning()
+            }
+            .font(.caption)
+        }
+    }
+
     private func rssiColor(_ rssi: Int) -> Color {
         switch rssi {
         case -60...0: return .green
@@ -207,7 +286,19 @@ struct RootView: View {
     }
 
     private var statusColor: Color {
-        switch bridge.connectionState {
+        statusColor(for: bridge.connectionState)
+    }
+
+    /// Connected-but-silent is its own state — see the comment in the Heart rate section.
+    private var heartRateStatusColor: Color {
+        if heartRate.connectionState == .connected && heartRate.heartRateBpm == nil {
+            return .orange
+        }
+        return statusColor(for: heartRate.connectionState)
+    }
+
+    private func statusColor(for state: ConnectionState) -> Color {
+        switch state {
         case .connected: return .green
         case .connecting, .scanning: return .yellow
         case .disconnected: return .red
