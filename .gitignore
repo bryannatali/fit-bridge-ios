@@ -5,5 +5,8 @@ build/
 DerivedData/
 .build/
 
+# Agent scratch space — plans, tickets, working notes
+.scratch/
+
 # Personal signing team — see Config/Signing.xcconfig
 Config/Local.xcconfig
